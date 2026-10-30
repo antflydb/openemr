@@ -18,6 +18,10 @@
 
 # OpenEMR
 
+This AntflyDB fork is developing PostgreSQL support, followed by Antfly
+compatibility. The application still requires MySQL/MariaDB today. See the
+[port status and reference tests](Documentation/database-postgresql.md).
+
 [OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
 
 ### Contributing

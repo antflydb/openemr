@@ -1,0 +1,31 @@
+# Disposable PostgreSQL reference tests; this does not start the EHR application.
+services:
+  postgres:
+    image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+    environment:
+      POSTGRES_DB: openemr
+      POSTGRES_USER: openemr
+      POSTGRES_PASSWORD: openemr-test-only
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openemr -d openemr"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  tests:
+    build:
+      context: ../..
+      dockerfile: docker/postgres-port/Dockerfile
+    volumes:
+      - ../..:/workspace
+    environment:
+      COMPOSER_CACHE_DIR: /workspace/tmp/composer-cache
+      OPENEMR_POSTGRES_TEST_HOST: postgres
+      OPENEMR_POSTGRES_TEST_DATABASE: openemr
+      OPENEMR_POSTGRES_TEST_USER: openemr
+      OPENEMR_POSTGRES_TEST_PASSWORD: openemr-test-only
+      OPENEMR_POSTGRES_TEST_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy

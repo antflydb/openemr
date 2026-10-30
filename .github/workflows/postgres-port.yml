@@ -1,0 +1,32 @@
+name: PostgreSQL Port Reference Tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/BC/**'
+      - 'tests/Tests/BC/**'
+      - 'tests/Tests/Integration/Database/**'
+      - 'docker/postgres-port/**'
+      - 'phpunit.integration.xml'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/postgres-port.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-port-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test PostgreSQL connection contracts
+        run: docker compose -f docker/postgres-port/compose.yaml up --build --abort-on-container-exit --exit-code-from tests
+      - name: Remove test containers and volumes
+        if: always()
+        run: docker compose -f docker/postgres-port/compose.yaml down --volumes

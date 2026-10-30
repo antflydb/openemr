@@ -30,6 +30,9 @@
     <!--<server name="PANTHER_NO_HEADLESS" value="1"/>-->
   </php>
   <testsuites>
+    <testsuite name="database">
+        <directory>tests/Tests/Integration/Database/</directory>
+    </testsuite>
     <testsuite name="api">
 	    <directory>tests/Tests/Integration/Api/</directory>
     </testsuite>

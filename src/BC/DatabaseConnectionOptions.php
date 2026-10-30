@@ -12,7 +12,6 @@ declare(strict_types=1);
 
 namespace OpenEMR\BC;
 
-use Doctrine\DBAL\DriverManager;
 use InvalidArgumentException;
 use LogicException;
 use PDO;
@@ -26,7 +25,21 @@ use SensitiveParameter;
  *
  * @internal
  *
- * @phpstan-import-type Params from DriverManager
+ * @phpstan-type DbalParams array{
+ *   driver: 'pdo_mysql'|'pdo_pgsql',
+ *   dbname: string,
+ *   user: string,
+ *   password: string,
+ *   charset: string,
+ *   host?: string,
+ *   port?: int,
+ *   unix_socket?: string,
+ *   driverOptions?: array<int, string>,
+ *   sslmode?: string,
+ *   sslrootcert?: string,
+ *   sslcert?: string,
+ *   sslkey?: string,
+ * }
  * @phpstan-type SqlConf array{
  *   dbase: string,
  *   login: string,
@@ -34,6 +47,8 @@ use SensitiveParameter;
  *   host?: string,
  *   port?: int|string,
  *   socket?: string,
+ *   db_type?: 'mysql'|'pgsql',
+ *   db_sslmode?: string,
  * }
  * @phpstan-type ClientCert array{
  *   cert: string,
@@ -63,6 +78,8 @@ final readonly class DatabaseConnectionOptions
         public ?string $unixSocket = null,
         public ?string $sslCaPath = null,
         public ?array $sslClientCert = null,
+        public DatabaseBackend $backend = DatabaseBackend::MySQL,
+        public string $sslMode = 'verify-full',
     ) {
         $hasHost = $host !== null;
         $hasPort = $port !== null;
@@ -87,7 +104,14 @@ final readonly class DatabaseConnectionOptions
             );
         }
 
-        $this->charset = 'utf8mb4';
+        if (!in_array($sslMode, ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'], true)) {
+            throw new InvalidArgumentException('Invalid PostgreSQL SSL mode');
+        }
+
+        $this->charset = match ($backend) {
+            DatabaseBackend::MySQL => 'utf8mb4',
+            DatabaseBackend::PostgreSQL => 'UTF8',
+        };
     }
 
     /**
@@ -99,7 +123,8 @@ final readonly class DatabaseConnectionOptions
         string $siteDir,
     ): self {
         $sqlconf = self::loadSqlconf($siteDir);
-        $sslPaths = self::inferSslPaths($siteDir);
+        $backend = DatabaseBackend::from($sqlconf['db_type'] ?? 'mysql');
+        $sslPaths = self::inferSslPaths($siteDir, $backend);
 
         return self::fromSqlconf($sqlconf, $sslPaths);
     }
@@ -125,22 +150,25 @@ final readonly class DatabaseConnectionOptions
             unixSocket: $unixSocket,
             sslCaPath: $ssl['ca'] ?? null,
             sslClientCert: $ssl['clientCert'] ?? null,
+            backend: DatabaseBackend::from($sqlconf['db_type'] ?? 'mysql'),
+            sslMode: $sqlconf['db_sslmode'] ?? 'verify-full',
         );
     }
 
     /**
-     * Detects MySQL SSL certificate files in site directory.
+     * Detects database SSL certificate files in the site directory.
      *
      * @return SslConfig
      */
-    public static function inferSslPaths(string $siteDir): array
+    public static function inferSslPaths(string $siteDir, DatabaseBackend $backend = DatabaseBackend::MySQL): array
     {
         $config = [];
 
         $certDir = sprintf('%s/documents/certificates', $siteDir);
-        $caFile = sprintf('%s/mysql-ca', $certDir);
-        $cert = sprintf('%s/mysql-cert', $certDir);
-        $key = sprintf('%s/mysql-key', $certDir);
+        $prefix = $backend->value;
+        $caFile = sprintf('%s/%s-ca', $certDir, $prefix);
+        $cert = sprintf('%s/%s-cert', $certDir, $prefix);
+        $key = sprintf('%s/%s-key', $certDir, $prefix);
 
         if (file_exists($caFile)) {
             $config['ca'] = $caFile;
@@ -148,7 +176,10 @@ final readonly class DatabaseConnectionOptions
         if (file_exists($cert) || file_exists($key)) {
             if (!file_exists($cert) || !file_exists($key)) {
                 throw new LogicException(
-                    'MySQL cert or key file missing. You need both or neither.'
+                    match ($backend) {
+                        DatabaseBackend::MySQL => 'MySQL cert or key file missing. You need both or neither.',
+                        DatabaseBackend::PostgreSQL => 'PostgreSQL cert or key file missing. You need both or neither.',
+                    }
                 );
             }
             $config['clientCert'] = [
@@ -191,12 +222,15 @@ final readonly class DatabaseConnectionOptions
      * Converts the options to the array format expected by Doctrine DBAL's
      * DriverManager::getConnection().
      *
-     * @return Params
+     * @return DbalParams
      */
     public function toDbalParams(): array
     {
         $params = [
-            'driver' => 'pdo_mysql',
+            'driver' => match ($this->backend) {
+                DatabaseBackend::MySQL => 'pdo_mysql',
+                DatabaseBackend::PostgreSQL => 'pdo_pgsql',
+            },
             'dbname' => $this->dbname,
             'user' => $this->user,
             'password' => $this->password,
@@ -211,10 +245,26 @@ final readonly class DatabaseConnectionOptions
         }
 
         if ($this->unixSocket !== null) {
-            $params['unix_socket'] = $this->unixSocket;
+            if ($this->backend === DatabaseBackend::PostgreSQL) {
+                $params['host'] = $this->unixSocket;
+            } else {
+                $params['unix_socket'] = $this->unixSocket;
+            }
         }
 
         $params['charset'] = $this->charset;
+
+        if ($this->backend === DatabaseBackend::PostgreSQL) {
+            $params['sslmode'] = $this->sslMode;
+            if ($this->sslCaPath !== null) {
+                $params['sslrootcert'] = $this->sslCaPath;
+            }
+            if ($this->sslClientCert !== null) {
+                $params['sslcert'] = $this->sslClientCert['cert'];
+                $params['sslkey'] = $this->sslClientCert['key'];
+            }
+            return $params;
+        }
 
         $driverOptions = [];
         if ($this->sslCaPath !== null) {
@@ -251,6 +301,8 @@ final readonly class DatabaseConnectionOptions
             'port' => $this->port,
             'unixSocket' => $this->unixSocket,
             'charset' => $this->charset,
+            'backend' => $this->backend->value,
+            'sslMode' => $this->sslMode,
             'sslCaPath' => $this->sslCaPath,
             'sslClientCert' => $this->sslClientCert,
         ];
