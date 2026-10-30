@@ -10,6 +10,7 @@ use Doctrine\DBAL\{
     DriverManager,
 };
 use mysqli;
+use LogicException;
 use OpenEMR\Common\Session\SessionWrapperFactory;
 use OpenEMR\Core\OEGlobalsBag;
 use RuntimeException;
@@ -25,6 +26,9 @@ class DatabaseConnectionFactory
         DatabaseConnectionOptions $config,
         bool $persistent = false,
     ): ADODB_mysqli_log {
+        if ($config->backend !== DatabaseBackend::MySQL) {
+            throw new LogicException('The legacy audited ADOdb path has not yet been ported to PostgreSQL');
+        }
         self::loadAdodbClasses();
         $conn = ADONewConnection('mysqli_log');
         if (!$conn instanceof ADODB_mysqli_log) {
@@ -92,6 +96,9 @@ class DatabaseConnectionFactory
         DatabaseConnectionOptions $config,
         bool $persistent,
     ): mysqli {
+        if ($config->backend !== DatabaseBackend::MySQL) {
+            throw new LogicException('The MySQLi installer path does not support PostgreSQL');
+        }
         $mysqli = new mysqli();
         $mysqli->options(MYSQLI_READ_DEFAULT_GROUP, 0);
         $mysqli->options(MYSQLI_OPT_LOCAL_INFILE, 1);

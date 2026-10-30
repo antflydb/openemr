@@ -13,6 +13,7 @@ declare(strict_types=1);
 namespace OpenEMR\Tests\BC;
 
 use InvalidArgumentException;
+use OpenEMR\BC\DatabaseBackend;
 use OpenEMR\BC\DatabaseConnectionOptions;
 use PDO;
 use PHPUnit\Framework\Attributes\Small;
@@ -23,6 +24,67 @@ use SensitiveParameter;
 #[Small]
 class DatabaseConnectionOptionsTest extends TestCase
 {
+    public function testPostgresConfigurationUsesItsOwnDriverAndCertificates(): void
+    {
+        $options = DatabaseConnectionOptions::fromSqlconf([
+            'dbase' => 'openemr',
+            'login' => 'clinician',
+            'pass' => 'secret',
+            'host' => 'postgres.example.com',
+            'port' => '5432',
+            'db_type' => 'pgsql',
+        ], [
+            'ca' => '/certs/ca.pem',
+            'clientCert' => ['cert' => '/certs/client.pem', 'key' => '/certs/client.key'],
+        ]);
+
+        self::assertSame(DatabaseBackend::PostgreSQL, $options->backend);
+        $params = $options->toDbalParams();
+        self::assertSame('pdo_pgsql', $params['driver']);
+        self::assertSame('openemr', $params['dbname']);
+        self::assertSame('clinician', $params['user']);
+        self::assertSame('secret', $params['password']);
+        self::assertSame('postgres.example.com', $params['host'] ?? null);
+        self::assertSame(5432, $params['port'] ?? null);
+        self::assertSame('UTF8', $params['charset']);
+        self::assertSame('verify-full', $params['sslmode'] ?? null);
+        self::assertSame('/certs/ca.pem', $params['sslrootcert'] ?? null);
+        self::assertSame('/certs/client.pem', $params['sslcert'] ?? null);
+        self::assertSame('/certs/client.key', $params['sslkey'] ?? null);
+        self::assertArrayNotHasKey('driverOptions', $params);
+        self::assertSame('[REDACTED]', $options->__debugInfo()['password']);
+    }
+
+    public function testPostgresSocketUsesLibpqHostDirectory(): void
+    {
+        $options = new DatabaseConnectionOptions(
+            dbname: 'openemr',
+            user: 'openemr',
+            password: 'secret',
+            unixSocket: '/var/run/postgresql',
+            backend: DatabaseBackend::PostgreSQL,
+            sslMode: 'disable',
+        );
+        $params = $options->toDbalParams();
+        self::assertSame('/var/run/postgresql', $params['host'] ?? null);
+        self::assertArrayNotHasKey('unix_socket', $params);
+        self::assertSame('disable', $params['sslmode'] ?? null);
+    }
+
+    public function testRejectsInvalidPostgresSslMode(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new DatabaseConnectionOptions(
+            dbname: 'openemr',
+            user: 'openemr',
+            password: 'secret',
+            host: 'localhost',
+            port: 5432,
+            backend: DatabaseBackend::PostgreSQL,
+            sslMode: 'invalid',
+        );
+    }
+
     public function testToDbalParamsWithHostAndPort(): void
     {
         $options = new DatabaseConnectionOptions(
@@ -35,13 +97,13 @@ class DatabaseConnectionOptionsTest extends TestCase
 
         $params = $options->toDbalParams();
 
-        self::assertSame('pdo_mysql', $params['driver'] ?? null);
-        self::assertSame('testdb', $params['dbname'] ?? null);
-        self::assertSame('testuser', $params['user'] ?? null);
-        self::assertSame('secret', $params['password'] ?? null);
+        self::assertSame('pdo_mysql', $params['driver']);
+        self::assertSame('testdb', $params['dbname']);
+        self::assertSame('testuser', $params['user']);
+        self::assertSame('secret', $params['password']);
         self::assertSame('db.example.com', $params['host'] ?? null);
         self::assertSame(3307, $params['port'] ?? null);
-        self::assertSame('utf8mb4', $params['charset'] ?? null);
+        self::assertSame('utf8mb4', $params['charset']);
         self::assertArrayNotHasKey('unix_socket', $params);
     }
 
